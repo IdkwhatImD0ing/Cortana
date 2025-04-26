@@ -1,103 +1,176 @@
-import Image from "next/image";
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import { AlertTriangle, Clock, Compass } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
+import CityMap from "@/components/city-map"
+import EmergencyPanel from "@/components/emergency-panel"
+import AIReasoningPanel from "@/components/ai-reasoning-panel"
+import TrafficLightStatus from "@/components/traffic-light-status"
+import IncidentReport from "@/components/incident-report"
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [activeEmergency, setActiveEmergency] = useState(false)
+  const [emergencyType, setEmergencyType] = useState<"fire" | "medical" | "police" | null>(null)
+  const [emergencyLocation, setEmergencyLocation] = useState<{ x: number; y: number } | null>(null)
+  const [incidentReports, setIncidentReports] = useState<any[]>([])
+  const [simulationTime, setSimulationTime] = useState(0)
+  const [isSimulationRunning, setIsSimulationRunning] = useState(false)
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const simulationInterval = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    if (isSimulationRunning) {
+      simulationInterval.current = setInterval(() => {
+        setSimulationTime((prev) => prev + 1)
+      }, 1000)
+    } else if (simulationInterval.current) {
+      clearInterval(simulationInterval.current)
+    }
+
+    return () => {
+      if (simulationInterval.current) {
+        clearInterval(simulationInterval.current)
+      }
+    }
+  }, [isSimulationRunning])
+
+  const handleEmergencyTrigger = (type: "fire" | "medical" | "police", location: { x: number; y: number }) => {
+    setActiveEmergency(true)
+    setEmergencyType(type)
+    setEmergencyLocation(location)
+    setIsSimulationRunning(true)
+
+    // Simulate an incident report after 15 seconds
+    setTimeout(() => {
+      const newReport = {
+        id: Date.now(),
+        type,
+        location: `${location.x}th and ${location.y}th Street`,
+        dispatchTime: new Date().toLocaleTimeString(),
+        arrivalTime: "3 minutes 24 seconds",
+        timeSaved: "47%",
+        routeCleared: ["Market St", "Pine St"],
+      }
+
+      setIncidentReports((prev) => [newReport, ...prev])
+      setActiveEmergency(false)
+      setEmergencyType(null)
+      setEmergencyLocation(null)
+      setIsSimulationRunning(false)
+      setSimulationTime(0)
+    }, 15000)
+  }
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`
+  }
+
+  return (
+    <main className="min-h-screen bg-gray-800 text-gray-100">
+      {/* Header */}
+      <header className="border-b border-gray-700 bg-gray-700 p-4">
+        <div className="container mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Compass className="h-6 w-6 text-emerald-500" />
+            <h1 className="text-xl font-bold">CityMind</h1>
+            <Badge variant="outline" className="ml-2 bg-emerald-900/30 text-emerald-300">
+              AI-Powered Emergency Traffic Command
+            </Badge>
+          </div>
+          <div className="flex items-center gap-4">
+            {isSimulationRunning && (
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-yellow-500" />
+                <span className="text-yellow-500">{formatTime(simulationTime)}</span>
+              </div>
+            )}
+            <Button variant={activeEmergency ? "destructive" : "outline"} size="sm" disabled={activeEmergency}>
+              <AlertTriangle className="mr-2 h-4 w-4" />
+              {activeEmergency ? "Emergency Active" : "System Ready"}
+            </Button>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+      </header>
+
+      <div className="container mx-auto p-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {/* Main visualization area */}
+          <div className="col-span-1 lg:col-span-2">
+            <Card className="border-gray-700 bg-gray-800 p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">City Playground Simulator</h2>
+                <div className="flex gap-2">
+                  <Badge variant="outline" className="bg-blue-700 text-white">
+                    Live Traffic
+                  </Badge>
+                  <Badge variant="outline" className="bg-emerald-700 text-white">
+                    AI Optimized
+                  </Badge>
+                </div>
+              </div>
+              <div className="aspect-square w-full overflow-hidden rounded-lg border border-gray-700 bg-gray-700">
+                <CityMap
+                  activeEmergency={activeEmergency}
+                  emergencyType={emergencyType}
+                  emergencyLocation={emergencyLocation}
+                  isSimulationRunning={isSimulationRunning}
+                />
+              </div>
+            </Card>
+          </div>
+
+          {/* Control panels */}
+          <div className="col-span-1">
+            <Tabs defaultValue="emergency" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="emergency">Emergency</TabsTrigger>
+                <TabsTrigger value="ai">AI Reasoning</TabsTrigger>
+                <TabsTrigger value="reports">Reports</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="emergency">
+                <EmergencyPanel onTriggerEmergency={handleEmergencyTrigger} isDisabled={activeEmergency} />
+              </TabsContent>
+
+              <TabsContent value="ai">
+                <AIReasoningPanel
+                  activeEmergency={activeEmergency}
+                  emergencyType={emergencyType}
+                  emergencyLocation={emergencyLocation}
+                />
+              </TabsContent>
+
+              <TabsContent value="reports">
+                <Card className="border-gray-700 bg-gray-800 p-4">
+                  <h3 className="mb-4 text-lg font-semibold">Incident Reports</h3>
+                  {incidentReports.length > 0 ? (
+                    <div className="space-y-4">
+                      {incidentReports.map((report) => (
+                        <IncidentReport key={report.id} report={report} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-gray-800 bg-gray-900 p-4 text-center text-gray-400">
+                      No incident reports yet
+                    </div>
+                  )}
+                </Card>
+              </TabsContent>
+            </Tabs>
+
+            <Card className="mt-4 border-gray-700 bg-gray-800 p-4">
+              <h3 className="mb-4 text-lg font-semibold">Traffic Light System</h3>
+              <TrafficLightStatus activeEmergency={activeEmergency} emergencyType={emergencyType} />
+            </Card>
+          </div>
+        </div>
+      </div>
+    </main>
+  )
 }
