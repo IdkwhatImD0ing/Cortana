@@ -83,7 +83,7 @@ export default function Dashboard() {
             <Button
               variant="ghost"
               size="icon"
-              className="text-gray-400 hover:text-white"
+              className="text-gray-400"
               onClick={() => setSidebarOpen(!sidebarOpen)}
             >
               <Menu className="h-5 w-5" />
@@ -318,7 +318,7 @@ export default function Dashboard() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-gray-400 hover:text-white"
+                  className="text-gray-400"
                   onClick={() => setDetailsOpen(false)}
                 >
                   <ChevronRight className="h-5 w-5" />
@@ -470,7 +470,7 @@ export default function Dashboard() {
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs text-gray-400 hover:text-white"
+              className="text-xs text-gray-400"
             >
               <FileText className="mr-1 h-3 w-3" />
               View Past Incidents
@@ -478,7 +478,7 @@ export default function Dashboard() {
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs text-gray-400 hover:text-white"
+              className="text-xs text-gray-400"
             >
               <BarChart3 className="mr-1 h-3 w-3" />
               Analytics
