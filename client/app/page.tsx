@@ -28,6 +28,7 @@ import {
 import {Separator} from '@/components/ui/separator'
 import {ScrollArea} from '@/components/ui/scroll-area'
 import {Progress} from '@/components/ui/progress'
+import CityMap from "@/components/city-map"
 
 export default function Dashboard() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(
@@ -224,11 +225,7 @@ export default function Dashboard() {
         {/* Main Map Area */}
         <main className="relative flex-1 overflow-hidden bg-[#061018]">
           <div className="absolute inset-0">
-            <img
-              src="/kepler-map.png"
-              alt="Map Visualization"
-              className="h-full w-full object-cover"
-            />
+            <CityMap />
 
             {/* Map Controls Overlay */}
             <div className="absolute bottom-4 left-4 flex flex-col gap-2">
@@ -386,7 +383,6 @@ export default function Dashboard() {
                     <Progress
                       value={68}
                       className="h-1 bg-gray-700"
-                      indicatorClassName="bg-cyan-500"
                     />
                   </div>
                 </div>

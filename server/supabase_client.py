@@ -1,3 +1,4 @@
+# supabase_client.py
 import os
 import math
 import time
@@ -31,7 +32,7 @@ else:
 def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
     """
     Prepares and inserts initial map data from GeoDataFrame into Supabase.
-    Clears the table before insertion.
+    Clears the table before insertion. Includes 'traffic_level'.
 
     Args:
         gdf: GeoDataFrame containing the map edge data.
@@ -46,6 +47,7 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
 
     print("Preparing data for Supabase insertion...")
     # Select and rename columns to match the 'road_segments' table
+    # --- Added 'traffic_level' ---
     required_cols = {
         "u": "u_node",
         "v": "v_node",
@@ -56,7 +58,9 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
         "bearing": "bearing",
         "length": "length",
         "signal_group": "signal_group",
+        "traffic_level": "traffic_level",  # Add traffic level here
     }
+    # ---------------------------
     cols_to_select = list(required_cols.keys())
     missing_cols = [col for col in cols_to_select if col not in gdf.columns]
     if missing_cols:
@@ -69,7 +73,7 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
 
     # Handle list-type 'osmid' values
     if "osmid" in df_for_db.columns:
-        # print("Processing 'osmid' column for potential lists...") # Less verbose
+
         def clean_osmid(x):
             if isinstance(x, list):
                 return x[0] if x else None
@@ -77,20 +81,30 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
 
         df_for_db["osmid"] = df_for_db["osmid"].apply(clean_osmid)
         df_for_db["osmid"] = pd.to_numeric(df_for_db["osmid"], errors="coerce")
-        # print("'osmid' column processed.")
 
     # Convert NaN/NaT values to None
-    # print("Converting NaN/NaT values to None...") # Less verbose
     for col in df_for_db.columns:
         df_for_db[col] = (
             df_for_db[col].astype(object).where(df_for_db[col].notna(), None)
         )
-    # print("NaN/NaT conversion complete.")
+
+    # Ensure traffic_level is integer or None
+    if "traffic_level" in df_for_db.columns:
+        # Convert to numeric first (handles strings if any), errors become NaN -> None
+        df_for_db["traffic_level"] = pd.to_numeric(
+            df_for_db["traffic_level"], errors="coerce"
+        )
+        # Convert float NaNs to None and then attempt integer conversion if needed by DB
+        df_for_db["traffic_level"] = (
+            df_for_db["traffic_level"]
+            .astype(object)
+            .where(df_for_db["traffic_level"].notna(), None)
+        )
+        # If your DB column is strictly INTEGER, you might need this, but handle None:
+        # df_for_db["traffic_level"] = df_for_db["traffic_level"].apply(lambda x: int(x) if x is not None else None)
 
     # Convert DataFrame to list of dictionaries
-    # print("Converting DataFrame to list of dictionaries...") # Less verbose
     data_to_insert = df_for_db.to_dict(orient="records")
-    # print("Conversion complete.")
 
     if not data_to_insert:
         status = "No data to insert"
@@ -121,12 +135,10 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
         total_inserted = 0
         num_batches = math.ceil(len(data_to_insert) / batch_size)
         print(f"Inserting data in {num_batches} batches of size {batch_size}...")
-        # ... (batch insertion loop as before) ...
         for i in range(0, len(data_to_insert), batch_size):
             batch_start_time = time.time()
             batch = data_to_insert[i : i + batch_size]
             current_batch_num = i // batch_size + 1
-            # print(f"Inserting batch {current_batch_num}/{num_batches} ({len(batch)} records)...") # Less verbose
 
             insert_response = supabase.table("road_segments").insert(batch).execute()
 
@@ -142,7 +154,6 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
                 inserted_count = len(insert_response.data)
                 total_inserted += inserted_count
                 batch_end_time = time.time()
-                # print(f"  Batch {current_batch_num} successful ({inserted_count} records). Time: {batch_end_time - batch_start_time:.2f}s") # Less verbose
             else:
                 print(
                     f"  Warning: Unexpected response structure or empty data for batch {current_batch_num}. Response: {insert_response}"
@@ -158,21 +169,20 @@ def insert_map_data_to_supabase(gdf: gpd.GeoDataFrame) -> str:
     return status
 
 
-# --- New Function for Updating Edge States ---
+# --- Function for Updating Edge States (Handles traffic_level if present) ---
 def update_supabase_edge_states(updates: List[Dict[str, Any]]):
     """
     Updates existing rows in the 'road_segments' table based on the provided updates.
+    Can handle updates for 'traffic_level', 'viz_color', 'is_green_u'/'v'.
 
     Args:
         updates: A list of dictionaries, where each dictionary must contain
-                 'u_node', 'v_node', and the fields to update
-                 (e.g., 'is_green_u', 'is_green_v', 'viz_color').
+                 'u_node', 'v_node', and the fields to update.
     """
     if supabase is None:
         print("Supabase client not initialized. Skipping database update.")
         return
     if not updates:
-        # print("No edge state updates to push to Supabase.") # Can be noisy
         return
 
     print(f"Attempting to update {len(updates)} edge states in Supabase...")
@@ -180,7 +190,6 @@ def update_supabase_edge_states(updates: List[Dict[str, Any]]):
     errors = []
     start_time = time.time()
 
-    # Currently, supabase-py likely requires updating row by row based on non-PKs.
     # Consider RPC for bulk updates if performance becomes an issue.
     for edge_update in updates:
         try:
@@ -194,6 +203,7 @@ def update_supabase_edge_states(updates: List[Dict[str, Any]]):
                 continue
 
             # Data payload excludes the keys used for matching
+            # It will automatically include 'traffic_level' if it exists in edge_update
             update_payload = {
                 k: v for k, v in edge_update.items() if k not in ["u_node", "v_node"]
             }
@@ -221,15 +231,17 @@ def update_supabase_edge_states(updates: List[Dict[str, Any]]):
                 update_count += len(
                     response.data
                 )  # Count how many rows were matched/updated
-            # else: # Handle cases where update might succeed but return no data (less common)
-            #    update_count += 1 # Assume success if no error? Risky.
 
         except Exception as e:
             errors.append(f"Exception updating u={u_node}, v={v_node}: {e}")
 
     end_time = time.time()
     print(f"Supabase update process finished in {end_time - start_time:.2f}s.")
-    print(f"Successfully updated {update_count} edge records.")
+    # Note: update_count might be higher than len(updates) if multiple rows match (u,v) pair,
+    # which shouldn't happen if (u,v) is unique or part of the PK.
+    print(
+        f"Matched/Updated {update_count} edge records based on {len(updates)} update instructions."
+    )
     if errors:
         print(f"Encountered {len(errors)} errors during update:")
         for error in errors[:5]:  # Print first few errors
