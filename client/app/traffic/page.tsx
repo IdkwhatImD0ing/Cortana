@@ -123,7 +123,7 @@ export default function TrafficMap() {
 
         // initial & periodic updates
         updateTraffic();
-        const intervalMs = 30_000;
+        const intervalMs = 10_000;
         console.log(`[TrafficMap] scheduling updates every ${intervalMs}ms`);
         const interval = setInterval(updateTraffic, intervalMs);
 
@@ -140,13 +140,16 @@ export default function TrafficMap() {
     }, []);
 
     if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
-        return <div style={{ color: "red", padding: 16 }}>Missing Mapbox token</div>;
+        return(
+            <div className="text-red-500 p-4">
+                Missing Mapbox token
+            </div>);
     }
 
     return (
         <div
-        ref={mapContainer}
-        style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
+            ref={mapContainer}
+            style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         />
     );
 }
