@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import mapboxgl, { GeoJSONSource } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { createClient, RealtimeChannel } from "@supabase/supabase-js";
+import { Feature, LineString, MultiLineString } from "geojson";
 
 interface BaseFeatureProperties {
     osmid?: number | string; 
@@ -195,7 +196,7 @@ export default function Map() {
                 GeoJSON.LineString | GeoJSON.MultiLineString,
                 BaseFeatureProperties
                 >[] = [];
-                rawGeojson.features.forEach((originalFeature) => {
+                rawGeojson.features.forEach((originalFeature: Feature<LineString | MultiLineString, BaseFeatureProperties>) => {
                 const osmid = originalFeature.properties?.osmid;
                 // Only keep necessary base properties, exclude viz_color from original JSON
                 const { viz_color, ...baseProperties } =
