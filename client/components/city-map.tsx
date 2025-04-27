@@ -1,321 +1,340 @@
-"use client"
+"use client";
 
-import type React from "react"
+import React, { useEffect, useRef, useState } from "react";
+import mapboxgl, { GeoJSONSource } from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
+import { createClient, RealtimeChannel } from "@supabase/supabase-js";
+import { FeatureCollection, Geometry } from "geojson";
 
-import { useState, useEffect, useRef } from "react"
-import { motion } from "framer-motion"
-
-interface CityMapProps {
-  activeEmergency: boolean
-  emergencyType: "fire" | "medical" | "police" | null
-  emergencyLocation: { x: number; y: number } | null
-  isSimulationRunning: boolean
+interface BaseFeatureProperties {
+    [key: string]: any;
 }
 
-interface Vehicle {
-  id: number
-  x: number
-  y: number
-  direction: "up" | "down" | "left" | "right"
-  speed: number
-  type: "car" | "emergency"
-  emergencyType?: "fire" | "medical" | "police"
+type TrafficFeatureCollection = FeatureCollection<Geometry, BaseFeatureProperties>;
+
+interface RoadSegment {
+    osmid: number | string;
+    traffic_level?: number | null;
 }
 
-interface TrafficLight {
-  id: number
-  x: number
-  y: number
-  direction: "vertical" | "horizontal"
-  status: "red" | "green"
+mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+if (!mapboxgl.accessToken) {
+    throw new Error("Missing NEXT_PUBLIC_MAPBOX_TOKEN");
 }
 
-const CityMap: React.FC<CityMapProps> = ({
-  activeEmergency,
-  emergencyType,
-  emergencyLocation,
-  isSimulationRunning,
-}) => {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([])
-  const [trafficLights, setTrafficLights] = useState<TrafficLight[]>([])
-  const [gridSize, setGridSize] = useState({ width: 10, height: 10 })
-  const animationRef = useRef<number | null>(null)
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-  // Initialize the city grid
-  useEffect(() => {
-    // Create a grid of roads and intersections
-    const lights: TrafficLight[] = []
+const lineColorExpression: any = [
+    "match",
+    ["feature-state", "traffic_level"],
+    0, "#4CAF50",
+    1, "#FFFF00",
+    2, "#FFA500",
+    3, "#800000",
+    /* fallback */ "#FFFFFF",
+];
 
-    // Create traffic lights at intersections
-    for (let x = 2; x < gridSize.width; x += 2) {
-      for (let y = 2; y < gridSize.height; y += 2) {
-        lights.push({
-          id: lights.length,
-          x,
-          y,
-          direction: Math.random() > 0.5 ? "vertical" : "horizontal",
-          status: Math.random() > 0.5 ? "red" : "green",
-        })
-      }
-    }
+export default function TrafficMap() {
+    const mapContainer = useRef<HTMLDivElement>(null);
+    const mapRef = useRef<mapboxgl.Map | null>(null);
+    const [geojson, setGeojson] = useState(null);
+    const [mapData, setMapData] = useState(null);
+    const isMapLoadedRef = useRef(false);
+    const mapChannelRef = useRef<RealtimeChannel | null>(null);
 
-    setTrafficLights(lights)
-
-    // Create random vehicles
-    const initialVehicles: Vehicle[] = []
-    for (let i = 0; i < 10; i++) {
-      const isHorizontal = Math.random() > 0.5
-      initialVehicles.push({
-        id: i,
-        x: isHorizontal
-          ? Math.floor(Math.random() * gridSize.width)
-          : Math.floor(Math.random() * (gridSize.width / 2)) * 2,
-        y: isHorizontal
-          ? Math.floor(Math.random() * (gridSize.height / 2)) * 2
-          : Math.floor(Math.random() * gridSize.height),
-        direction: isHorizontal ? (Math.random() > 0.5 ? "left" : "right") : Math.random() > 0.5 ? "up" : "down",
-        speed: 0.05 + Math.random() * 0.05,
-        type: "car",
-      })
-    }
-
-    setVehicles(initialVehicles)
-  }, [gridSize])
-
-  // Add emergency vehicle when emergency is triggered
-  useEffect(() => {
-    if (activeEmergency && emergencyType && emergencyLocation) {
-      // Add emergency vehicle at a random edge of the map
-      const startPositions = [
-        { x: 0, y: 2, direction: "right" },
-        { x: gridSize.width - 1, y: 2, direction: "left" },
-        { x: 2, y: 0, direction: "down" },
-        { x: 2, y: gridSize.height - 1, direction: "up" },
-      ]
-
-      const startPos = startPositions[Math.floor(Math.random() * startPositions.length)]
-
-      const emergencyVehicle: Vehicle = {
-        id: vehicles.length,
-        x: startPos.x,
-        y: startPos.y,
-        direction: startPos.direction as "up" | "down" | "left" | "right",
-        speed: 0.15, // Emergency vehicles move faster
-        type: "emergency",
-        emergencyType,
-      }
-
-      setVehicles((prev) => [...prev, emergencyVehicle])
-
-      // Update traffic lights to prioritize emergency route
-      if (emergencyLocation) {
-        const updatedLights = trafficLights.map((light) => {
-          // Simplified logic: make lights green in the direction of emergency
-          const isOnPath = light.x <= emergencyLocation.x && light.y <= emergencyLocation.y
-          if (isOnPath) {
-            return {
-              ...light,
-              status: "green",
-              direction: light.x === emergencyLocation.x ? "vertical" : "horizontal",
-            }
-          }
-          return light
-        })
-
-        setTrafficLights(updatedLights)
-      }
-    }
-  }, [activeEmergency, emergencyType, emergencyLocation])
-
-  // Animation loop for vehicle movement
-  useEffect(() => {
-    if (!isSimulationRunning) return
-
-    const updateVehicles = () => {
-      setVehicles((prevVehicles) => {
-        return prevVehicles.map((vehicle) => {
-          let newX = vehicle.x
-          let newY = vehicle.y
-          let newDirection = vehicle.direction
-
-          // Move vehicle based on direction
-          switch (vehicle.direction) {
-            case "up":
-              newY -= vehicle.speed
-              break
-            case "down":
-              newY += vehicle.speed
-              break
-            case "left":
-              newX -= vehicle.speed
-              break
-            case "right":
-              newX += vehicle.speed
-              break
-          }
-
-          // Check if vehicle is at an intersection
-          const isAtIntersection = trafficLights.some(
-            (light) => Math.abs(light.x - newX) < 0.2 && Math.abs(light.y - newY) < 0.2,
-          )
-
-          if (isAtIntersection && Math.random() > 0.9) {
-            // Randomly change direction at intersections
-            const directions: ("up" | "down" | "left" | "right")[] = ["up", "down", "left", "right"]
-            newDirection = directions[Math.floor(Math.random() * directions.length)]
-          }
-
-          // Wrap around the map edges
-          if (newX < 0) newX = gridSize.width - 1
-          if (newX >= gridSize.width) newX = 0
-          if (newY < 0) newY = gridSize.height - 1
-          if (newY >= gridSize.height) newY = 0
-
-          return {
-            ...vehicle,
-            x: newX,
-            y: newY,
-            direction: newDirection,
-          }
-        })
-      })
-
-      animationRef.current = requestAnimationFrame(updateVehicles)
-    }
-
-    animationRef.current = requestAnimationFrame(updateVehicles)
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [isSimulationRunning, trafficLights])
-
-  // Render the city grid
-  const renderGrid = () => {
-    const cells = []
-
-    // Render roads
-    for (let x = 0; x < gridSize.width; x++) {
-      for (let y = 0; y < gridSize.height; y++) {
-        const isHorizontalRoad = y % 2 === 0
-        const isVerticalRoad = x % 2 === 0
-        const isIntersection = isHorizontalRoad && isVerticalRoad
-
-        let cellClass = "absolute border border-gray-600"
-
-        if (isIntersection) {
-          cellClass += " bg-gray-600"
-        } else if (isHorizontalRoad || isVerticalRoad) {
-          cellClass += " bg-gray-700"
-        } else {
-          cellClass += " bg-gray-800"
+    // Effect 1: Initialize Map, Fetch GeoJSON, Fetch Supabase, Set Initial State, Setup Listener
+    useEffect(() => {
+        // --- Check for necessary config ---
+        if (!mapboxgl.accessToken) {
+        console.error("Missing Mapbox or Supabase configuration.");
+        return; 
         }
 
-        cells.push(
-          <div
-            key={`${x}-${y}`}
-            className={cellClass}
-            style={{
-              width: `${100 / gridSize.width}%`,
-              height: `${100 / gridSize.height}%`,
-              left: `${(x / gridSize.width) * 100}%`,
-              top: `${(y / gridSize.height) * 100}%`,
-            }}
-          />,
+        // --- Initialize Map ---
+        if (!mapContainer.current || mapRef.current) return;
+
+        console.log("[Effect 1] Initializing map");
+        const map = new mapboxgl.Map({
+            container: mapContainer.current,
+            style: "mapbox://styles/mapbox/dark-v10",
+            center: [-122.4194, 37.7749], // SF Coordinates
+            zoom: 12,
+        });
+        map.addControl(new mapboxgl.NavigationControl());
+        mapRef.current = map;
+
+        // --- Function to fetch initial Supabase data ---
+        const fetchInitialSupabaseData = async (): Promise<RoadSegment[]> => {
+        console.log("[Effect 1] Fetching initial Supabase data...");
+        let allRows: RoadSegment[] = [];
+        let from = 0;
+        const pageSize = 1000; // Supabase page size limit
+        let got;
+        try {
+            do {
+            const { data, error, count } = await supabase
+                .from("road_segments")
+                .select("osmid, traffic_level", { count: "exact" }) // Only select needed columns
+                .order("id", { ascending: true }) // Consistent ordering if needed
+                .range(from, from + pageSize - 1);
+
+            if (error) throw error;
+            got = data?.length ?? 0;
+            if (data) {
+                allRows = allRows.concat(data as RoadSegment[]);
+            }
+            from += pageSize;
+            // console.log(`Fetched page: ${from / pageSize}, Total expected: ${Math.ceil((count ?? 0) / pageSize)}`);
+            } while (got === pageSize);
+            console.log(
+            `[Effect 1] Fetched ${allRows.length} initial road segments from Supabase.`
+            );
+            return allRows;
+        } catch (error) {
+            console.error(
+            "[Effect 1] Error fetching initial Supabase data:",
+            error
+            );
+            return []; // Return empty array on error
+        }
+        };
+
+        // --- Function to apply Supabase state to map features ---
+        const applySupabaseStateToMap = (
+        supabaseData: RoadSegment[],
+        currentMap: mapboxgl.Map | null
+        ) => {
+        if (!currentMap || !currentMap.isStyleLoaded()) {
+            console.warn(
+            "[Apply State] Map not ready, skipping state application."
+            );
+            return;
+        }
+        console.log(
+            `[Apply State] Applying initial state for ${supabaseData.length} segments...`
+        );
+        try {
+            supabaseData.forEach((segment) => {
+            // Ensure osmid is treated as a number for the feature ID
+            const featureId = Number(segment.osmid);
+            if (!isNaN(featureId)) {
+                currentMap.setFeatureState(
+                { source: "traffic_edges", id: featureId },
+                { traffic_level: Number(segment.traffic_level ?? -1) } // Use default if null/undefined
+                );
+            } else {
+                console.warn(
+                `[Apply State] Invalid osmid found in Supabase data: ${segment.osmid}`
+                );
+            }
+            });
+            console.log("[Apply State] Finished applying initial Supabase states.");
+        } catch (error) {
+            console.error("[Apply State] Error setting feature states:", error);
+        }
+        };
+
+        // --- Map Load Event Listener ---
+        map.on("load", async () => {
+        console.log("[Effect 1] Map loaded event");
+        isMapLoadedRef.current = true; // Mark map as loaded
+        if (!mapRef.current) return; // Type guard
+
+        let source: GeoJSONSource | undefined;
+
+        // 1. Add Source & Layer
+        try {
+            console.log("[Effect 1] Adding empty source: traffic_edges");
+            mapRef.current.addSource("traffic_edges", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] }, // Start empty
+            });
+            source = mapRef.current.getSource("traffic_edges") as
+            | GeoJSONSource
+            | undefined;
+            if (!source) throw new Error("Failed to get source after adding it.");
+
+            console.log("[Effect 1] Adding layer: traffic_lines");
+            mapRef.current.addLayer({
+            id: "traffic_lines",
+            type: "line",
+            source: "traffic_edges",
+            layout: { "line-join": "round", "line-cap": "round" },
+            paint: {
+                "line-color": lineColorExpression, // Uses feature-state
+                "line-width": 2,
+                "line-opacity": 0.8,
+            },
+            });
+        } catch (error) {
+            console.error("[Effect 1] Error adding source/layer:", error);
+            return;
+        }
+
+        // 2. Fetch, Process GeoJSON, and Set Source Data
+        let processedGeoJson: TrafficFeatureCollection | null = null;
+        try {
+            console.log("[Effect 1] Fetching GeoJSON data...");
+            const resp = await fetch("/data/sf_traffic_map.json");
+            if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+            const rawGeojson = (await resp.json()) as TrafficFeatureCollection;
+
+            console.log(
+            "[Effect 1] Processing GeoJSON features (assigning IDs)..."
+            );
+            const processedFeatures: GeoJSON.Feature<
+            GeoJSON.LineString | GeoJSON.MultiLineString,
+            BaseFeatureProperties
+            >[] = [];
+            rawGeojson.features.forEach((originalFeature) => {
+            const osmid = originalFeature.properties?.osmid;
+            // Only keep necessary base properties, exclude traffic_level from original JSON
+            const { traffic_level, ...baseProperties } =
+                originalFeature.properties || {};
+
+            if (Array.isArray(osmid)) {
+                osmid.forEach((idStr) => {
+                const newFeature = structuredClone(originalFeature);
+                newFeature.id = parseInt(idStr, 10);
+                newFeature.properties = baseProperties; // Assign base properties
+                processedFeatures.push(newFeature);
+                });
+            } else if (osmid !== undefined && osmid !== null) {
+                originalFeature.id =
+                typeof osmid === "string" ? parseInt(osmid, 10) : osmid;
+                originalFeature.properties = baseProperties; // Assign base properties
+                processedFeatures.push(originalFeature);
+            } else {
+                originalFeature.properties = baseProperties; // Assign base properties
+                processedFeatures.push(originalFeature);
+            }
+            });
+
+            processedGeoJson = {
+            type: "FeatureCollection",
+            features: processedFeatures,
+            };
+            console.log("[Effect 1] GeoJSON processed.");
+
+            console.log("[Effect 1] Setting source data...");
+            source.setData(processedGeoJson); // Update the source with processed data
+            console.log("[Effect 1] Source data set.");
+
+            // Update React State (optional)
+            setGeojson(processedGeoJson);
+        } catch (error) {
+            console.error("[Effect 1] Failed to fetch or process GeoJSON:", error);
+            // Decide if we should proceed without GeoJSON
+            return;
+        }
+
+        // 3. Fetch Initial Supabase Data & Apply State
+        const initialSupabaseData = await fetchInitialSupabaseData();
+        if (initialSupabaseData.length > 0) {
+            applySupabaseStateToMap(initialSupabaseData, mapRef.current);
+        }
+
+        // 4. Fit Bounds (based on GeoJSON)
+        if (processedGeoJson && processedGeoJson.features.length > 0) {
+            try {
+            const bounds = new mapboxgl.LngLatBounds();
+            processedGeoJson.features.forEach((f) => {
+                if (!f.geometry) return;
+                if (f.geometry.type === "LineString") {
+                (f.geometry.coordinates as [number, number][]).forEach((pt) =>
+                    bounds.extend(pt)
+                );
+                } else if (f.geometry.type === "MultiLineString") {
+                (f.geometry.coordinates as [number, number][][]).forEach((line) =>
+                    line.forEach((pt) => bounds.extend(pt))
+                );
+                }
+            });
+            if (!bounds.isEmpty()) {
+                console.log("[Effect 1] Fitting map to bounds (initial)...");
+                mapRef.current?.fitBounds(bounds, { padding: 40, duration: 1000 });
+            }
+            } catch (error) {
+            console.error("[Effect 1] Error fitting bounds:", error);
+            }
+        }
+        }); // End map.on('load')
+
+        // --- Setup Supabase Realtime Listener ---
+        console.log("[Effect 1] Setting up Supabase realtime listener...");
+        mapChannelRef.current = supabase
+        .channel("road_segments_realtime") // Use a unique channel name
+        .on<RoadSegment>(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "road_segments" },
+            (payload) => {
+            console.log("Supabase change received:", payload);
+            const updatedSegment = payload.new;
+            if (updatedSegment && mapRef.current && isMapLoadedRef.current) {
+                const featureId = Number(updatedSegment.osmid);
+                const newLevel = Number(updatedSegment.traffic_level ?? -1); // Default if null
+                if (!isNaN(featureId)) {
+                console.log(
+                    `[Realtime] Updating feature ${featureId} to level ${newLevel}`
+                );
+                mapRef.current.setFeatureState(
+                    { source: "traffic_edges", id: featureId },
+                    { traffic_level: newLevel }
+                );
+                } else {
+                console.warn(
+                    `[Realtime] Invalid osmid in payload: ${updatedSegment.osmid}`
+                );
+                }
+            }
+            }
         )
-      }
+        .subscribe((status, err) => {
+            // Optional: Log subscription status
+            if (status === "SUBSCRIBED") {
+            console.log("[Effect 1] Supabase realtime channel subscribed.");
+            }
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.error(`[Effect 1] Supabase channel error: ${status}`, err);
+            }
+        });
+
+        // Cleanup function: Remove map and unsubscribe from channel
+        return () => {
+        console.log(
+            "[Effect 1] Cleaning up: Removing map and unsubscribing from Supabase."
+        );
+        if (mapRef.current) {
+            // Check if map is loaded before calling remove, although remove() handles it internally
+            mapRef.current.remove();
+            mapRef.current = null;
+        }
+        isMapLoadedRef.current = false;
+
+        if (mapChannelRef.current) {
+            supabase
+            .removeChannel(mapChannelRef.current)
+            .then(() => console.log("[Effect 1] Supabase channel removed."))
+            .catch((err) =>
+                console.error("[Effect 1] Error removing Supabase channel:", err)
+            );
+            mapChannelRef.current = null;
+        }
+        };
+    }, []); // Empty dependency array ensures this runs only once on mount
+
+    // Fallback UI
+    if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
+        return <div className="text-red-500 p-4">Missing Mapbox token</div>;
     }
 
-    return cells
-  }
-
-  // Render traffic lights
-  const renderTrafficLights = () => {
-    return trafficLights.map((light) => (
-      <div
-        key={`light-${light.id}`}
-        className={`absolute rounded-full ${light.status === "red" ? "bg-red-500" : "bg-emerald-500"}`}
-        style={{
-          width: "10px",
-          height: "10px",
-          left: `calc(${(light.x / gridSize.width) * 100}% - 5px)`,
-          top: `calc(${(light.y / gridSize.height) * 100}% - 5px)`,
-          boxShadow: `0 0 10px ${light.status === "red" ? "#ef4444" : "#10b981"}`,
-        }}
-      />
-    ))
-  }
-
-  // Render vehicles
-  const renderVehicles = () => {
-    return vehicles.map((vehicle) => {
-      let vehicleColor = "bg-blue-500"
-
-      if (vehicle.type === "emergency") {
-        if (vehicle.emergencyType === "fire") vehicleColor = "bg-red-500"
-        else if (vehicle.emergencyType === "medical") vehicleColor = "bg-white"
-        else if (vehicle.emergencyType === "police") vehicleColor = "bg-blue-600"
-      }
-
-      return (
-        <motion.div
-          key={`vehicle-${vehicle.id}`}
-          className={`absolute rounded-sm ${vehicleColor}`}
-          style={{
-            width: vehicle.type === "emergency" ? "15px" : "10px",
-            height: vehicle.type === "emergency" ? "15px" : "10px",
-            x: `calc(${(vehicle.x / gridSize.width) * 100}% - ${vehicle.type === "emergency" ? "7.5px" : "5px"})`,
-            y: `calc(${(vehicle.y / gridSize.height) * 100}% - ${vehicle.type === "emergency" ? "7.5px" : "5px"})`,
-            boxShadow: vehicle.type === "emergency" ? `0 0 15px ${vehicleColor.replace("bg-", "")}` : "none",
-            zIndex: vehicle.type === "emergency" ? 20 : 10,
-          }}
-          animate={{
-            x: `calc(${(vehicle.x / gridSize.width) * 100}% - ${vehicle.type === "emergency" ? "7.5px" : "5px"})`,
-            y: `calc(${(vehicle.y / gridSize.height) * 100}% - ${vehicle.type === "emergency" ? "7.5px" : "5px"})`,
-            rotate:
-              vehicle.direction === "up"
-                ? -90
-                : vehicle.direction === "down"
-                  ? 90
-                  : vehicle.direction === "left"
-                    ? 180
-                    : 0,
-          }}
-          transition={{ type: "tween", duration: 0.1 }}
-        />
-      )
-    })
-  }
-
-  // Render emergency location
-  const renderEmergencyLocation = () => {
-    if (!emergencyLocation) return null
-
     return (
-      <div
-        className="absolute animate-pulse rounded-full bg-red-500/50"
-        style={{
-          width: "30px",
-          height: "30px",
-          left: `calc(${(emergencyLocation.x / gridSize.width) * 100}% - 15px)`,
-          top: `calc(${(emergencyLocation.y / gridSize.height) * 100}% - 15px)`,
-          boxShadow: "0 0 20px #ef4444",
-          zIndex: 5,
-        }}
-      />
-    )
-  }
-
-  return (
-    <div className="relative h-full w-full">
-      {renderGrid()}
-      {renderTrafficLights()}
-      {renderVehicles()}
-      {renderEmergencyLocation()}
-    </div>
-  )
+        <div
+        ref={mapContainer}
+        style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
+        />
+    );
 }
-
-export default CityMap

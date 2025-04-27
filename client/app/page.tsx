@@ -1,6 +1,6 @@
-'use client'
+"use client";
 
-import {useState} from 'react'
+import { useState } from "react";
 import {
   AlertCircle,
   FileText,
@@ -14,61 +14,65 @@ import {
   X,
   Menu,
   BarChart3,
-} from 'lucide-react'
-import {Badge} from '@/components/ui/badge'
-import {Button} from '@/components/ui/button'
-import {Input} from '@/components/ui/input'
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import {Separator} from '@/components/ui/separator'
-import {ScrollArea} from '@/components/ui/scroll-area'
-import {Progress} from '@/components/ui/progress'
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
+
+import CityMap from "@/components/city-map";
+import TrafficLightsMap from "@/components/traffic-lights-map";
 
 export default function Dashboard() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(
-    'INC-001',
-  )
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [detailsOpen, setDetailsOpen] = useState(true)
+    "INC-001"
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [mapType, setMapType] = useState<"city" | "traffic">("city");
 
   const incidents = [
     {
-      id: 'INC-001',
-      type: 'Fire',
-      location: '12th and Pine Street',
-      status: 'Active',
-      vehicle: 'Firetruck #103',
-      time: '3 minutes ago',
+      id: "INC-001",
+      type: "Fire",
+      location: "12th and Pine Street",
+      status: "Active",
+      vehicle: "Firetruck #103",
+      time: "3 minutes ago",
       icon: <Flame className="h-4 w-4 text-red-500" />,
     },
     {
-      id: 'INC-002',
-      type: 'Medical',
-      location: 'Market & 4th',
-      status: 'En Route',
-      vehicle: 'Ambulance #42',
-      time: '5 minutes ago',
+      id: "INC-002",
+      type: "Medical",
+      location: "Market & 4th",
+      status: "En Route",
+      vehicle: "Ambulance #42",
+      time: "5 minutes ago",
       icon: <AlertCircle className="h-4 w-4 text-amber-500" />,
     },
     {
-      id: 'INC-003',
-      type: 'Police',
-      location: 'Embarcadero Center',
-      status: 'Arrived',
-      vehicle: 'Police Car #17',
-      time: '12 minutes ago',
+      id: "INC-003",
+      type: "Police",
+      location: "Embarcadero Center",
+      status: "Arrived",
+      vehicle: "Police Car #17",
+      time: "12 minutes ago",
       icon: <Shield className="h-4 w-4 text-blue-500" />,
     },
-  ]
+  ];
 
   const selectedIncidentDetails = incidents.find(
-    (inc) => inc.id === selectedIncident,
-  )
+    (inc) => inc.id === selectedIncident
+  );
 
   return (
     <div className="flex h-screen flex-col bg-[#0a1420] text-gray-100">
@@ -95,15 +99,15 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 rounded-md bg-gray-800/50 px-3 py-1 text-xs">
-              <div className="h-2 w-2 rounded-full bg-green-500"></div>
+              <div className="h-2 w-2 rounded-full bg-green-500" />
               <span>System Online</span>
             </div>
             <div className="flex items-center gap-2 rounded-md bg-gray-800/50 px-3 py-1 text-xs">
-              <div className="h-2 w-2 rounded-full bg-green-500"></div>
+              <div className="h-2 w-2 rounded-full bg-green-500" />
               <span>Data Sources Connected</span>
             </div>
             <div className="flex items-center gap-2 rounded-md bg-gray-800/50 px-3 py-1 text-xs">
-              <div className="h-2 w-2 rounded-full bg-green-500"></div>
+              <div className="h-2 w-2 rounded-full bg-green-500" />
               <span>AI Agents Active</span>
             </div>
           </div>
@@ -111,10 +115,10 @@ export default function Dashboard() {
       </header>
 
       <div className="relative flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Emergency Control & Incident List */}
+        {/* Left Sidebar */}
         <div
           className={`absolute bottom-0 left-0 top-0 z-20 flex w-80 flex-col border-r border-gray-800 bg-[#0a1420] transition-transform duration-300 ${
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
           <div className="flex flex-col p-4">
@@ -224,33 +228,51 @@ export default function Dashboard() {
         {/* Main Map Area */}
         <main className="relative flex-1 overflow-hidden bg-[#061018]">
           <div className="absolute inset-0">
-            <img
-              src="/kepler-map.png"
-              alt="Map Visualization"
-              className="h-full w-full object-cover"
-            />
+
+            {/* Moved Toggle to Top Center */}
+            <div className="absolute top-4 left-1/2 z-30 transform -translate-x-1/2">
+              <div className="inline-flex overflow-hidden rounded-md bg-cyan-200">
+                {/* City Map */}
+                <button
+                  onClick={() => setMapType("city")}
+                  className={`px-4 py-2 text-sm font-semibold focus:z-10 transition-colors ${
+                    mapType === "city"
+                      ? "bg-cyan-700 text-white"
+                      : "text-cyan-700 hover:bg-cyan-300"
+                  } rounded-l-md`}
+                >
+                  City Map
+                </button>
+
+                {/* Traffic Lights */}
+                <button
+                  onClick={() => setMapType("traffic")}
+                  className={`px-4 py-2 text-sm font-semibold focus:z-10 transition-colors ${
+                    mapType === "traffic"
+                      ? "bg-cyan-700 text-white"
+                      : "text-cyan-700 hover:bg-cyan-300"
+                  } rounded-r-md`}
+                >
+                  Traffic Lights
+                </button>
+              </div>
+            </div>
+
+            {mapType === "city" ? <CityMap /> : <TrafficLightsMap />}
 
             {/* Map Controls Overlay */}
             <div className="absolute bottom-4 left-4 flex flex-col gap-2">
-              <Button
-                size="icon"
-                variant="secondary"
-                className="h-8 w-8 rounded-full bg-gray-800 text-white hover:bg-gray-700"
-              >
+              <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full bg-gray-800 text-white hover:bg-gray-700">
                 <Plus className="h-4 w-4" />
               </Button>
-              <Button
-                size="icon"
-                variant="secondary"
-                className="h-8 w-8 rounded-full bg-gray-800 text-white hover:bg-gray-700"
-              >
+              <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full bg-gray-800 text-white hover:bg-gray-700">
                 <X className="h-4 w-4" />
               </Button>
             </div>
 
             {/* Map Legend */}
             <div className="absolute right-4 top-4 rounded-md border border-gray-800 bg-gray-900/80 p-3 backdrop-blur-sm">
-              <h3 className="mb-2 text-xs font-medium">Map Legend</h3>
+            <h3 className="mb-2 text-xs font-medium">Map Legend</h3>
               <div className="space-y-2 text-xs">
                 <div className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full bg-red-500"></div>
@@ -277,12 +299,10 @@ export default function Dashboard() {
           </div>
         </main>
 
-        {/* Right Sidebar - Incident Details */}
+        {/* Right Sidebar */}
         <div
           className={`absolute bottom-0 right-0 top-0 z-20 flex w-96 flex-col border-l border-gray-800 bg-[#0a1420] transition-transform duration-300 ${
-            detailsOpen && selectedIncident
-              ? 'translate-x-0'
-              : 'translate-x-full'
+            detailsOpen && selectedIncident ? "translate-x-0" : "translate-x-full"
           }`}
         >
           {selectedIncidentDetails && (
@@ -386,7 +406,7 @@ export default function Dashboard() {
                     <Progress
                       value={68}
                       className="h-1 bg-gray-700"
-                      indicatorClassName="bg-cyan-500"
+                      // indicatorClassName="bg-cyan-500"
                     />
                   </div>
                 </div>
@@ -470,5 +490,5 @@ export default function Dashboard() {
         </div>
       </footer>
     </div>
-  )
+  );
 }
