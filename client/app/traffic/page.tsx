@@ -58,10 +58,10 @@ export default function TrafficMap() {
 
         console.log("[Effect 1] Initializing map");
         const map = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: "mapbox://styles/mapbox/dark-v10",
-        center: [-122.4194, 37.7749], // SF Coordinates
-        zoom: 12,
+            container: mapContainer.current,
+            style: "mapbox://styles/mapbox/dark-v10",
+            center: [-122.4194, 37.7749], // SF Coordinates
+            zoom: 12,
         });
         map.addControl(new mapboxgl.NavigationControl());
         mapRef.current = map;
