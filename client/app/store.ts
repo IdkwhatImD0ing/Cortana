@@ -1,37 +1,38 @@
-// store/store.js
-import { applyMiddleware, combineReducers, compose, createStore } from 'redux';
-import keplerGlReducer, { enhanceReduxMiddleware } from '@kepler.gl/reducers';
+// store.ts
+import { createStore, combineReducers, applyMiddleware, compose, Store } from 'redux';
+import keplerGlReducer from '@kepler.gl/reducers';
+import { taskMiddleware } from 'react-palm/tasks';
 
-// Combine your reducers
-const reducers = combineReducers({
-  // Mount Kepler.gl reducer, potentially with initial UI state
-  keplerGl: keplerGlReducer.initialState({
-    uiState: {
-      readOnly: false, // Example: Set readOnly mode if needed
-      currentModal: null
-      // You could potentially set other initial UI states here
-    }
-  }),
-  // Add other reducers for your app here if you have them
-  // app: myAppReducer,
+// Define the shape of your Redux state
+export interface RootState {
+  keplerGl: ReturnType<typeof keplerGlReducer>;
+}
+
+// Combine KeplerGL reducer under `keplerGl`
+const rootReducer = combineReducers<RootState>({
+  keplerGl: keplerGlReducer()
 });
 
-// Define middlewares
-const middleWares = enhanceReduxMiddleware([
-  // Add other middlewares (like thunk, saga, etc.) here if needed
-]);
+// Allow Redux DevTools extension if present
+declare global {
+  interface Window {
+    __REDUX_DEVTOOLS_EXTENSION_COMPOSE__?: typeof compose;
+  }
+}
 
-// Compose enhancers
-// Check if Redux DevTools Extension is available
-const composeEnhancers = typeof window !== 'undefined' && window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ || compose;
-const enhancers = composeEnhancers(applyMiddleware(...middleWares));
+// Compose enhancers: middleware + DevTools
+const composeEnhancers =
+  (typeof window !== 'undefined' && window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__) ||
+  compose;
 
-// Create store
-const initialState = {};
-const store = createStore(
-  reducers,
-  initialState,
-  enhancers
+const enhancer = composeEnhancers(
+  applyMiddleware(taskMiddleware)
+);
+
+// Create the Redux store
+const store: Store<RootState> = createStore(
+  rootReducer,
+  enhancer
 );
 
 export default store;
