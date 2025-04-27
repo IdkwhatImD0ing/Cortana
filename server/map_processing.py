@@ -7,6 +7,8 @@ import networkx as nx  # Import networkx for graph algorithms like BFS
 from collections import deque  # Needed for BFS queue
 from typing import Tuple, Optional, Dict, List, Any
 import math
+import numpy as np
+from shapely.geometry import LineString, Point
 
 print(f"OSMnx version used in map_processing: {ox.__version__}")
 print(f"NetworkX version used in map_processing: {nx.__version__}")
@@ -178,6 +180,78 @@ def find_shortest_path(
 
 # --- End Modified Function ---
 
+def find_nearest_node(graph: nx.MultiGraph, point_lat: float, point_lon: float) -> Optional[int]:
+    """
+    Finds the nearest node ID in the graph to a given lat/lon point.
+
+    MODIFIED: Explicitly projects input point before calling nearest_nodes.
+
+    Args:
+        graph: The networkx graph object (must be projected, e.g., to UTM).
+        point_lat: The latitude of the point (float).
+        point_lon: The longitude of the point (float, should be negative for SF).
+
+    Returns:
+        The integer ID (OSM ID) of the nearest node, or None if an error occurs.
+    """
+    # --- Graph Checks ---
+    if graph is None or graph.number_of_nodes() == 0:
+        print("Find Nearest Node Error: Graph is None or empty.")
+        return None
+    target_crs = graph.graph.get("crs")
+    if target_crs is None or (hasattr(target_crs, "is_geographic") and target_crs.is_geographic):
+        print("Find Nearest Node Error: Graph must be projected to a suitable CRS.")
+        print(f"Current graph CRS: {target_crs}")
+        return None
+
+    # --- Input Coordinate Type/Value Checks ---
+    # (Keep the checks from the previous version if desired, ensuring lat/lon are numbers)
+    # ... (removed for brevity, but recommend keeping them) ...
+    if not isinstance(point_lat, (float, int, np.number)) or not isinstance(point_lon, (float, int, np.number)):
+         print("Find Nearest Node Error: Lat/Lon must be numbers.")
+         return None
+    if point_lon > 0 and (-123.0 < point_lon < -121.5):
+         print(f"Find Nearest Node CRITICAL WARNING: Longitude {point_lon} is positive! Should be negative for SF.")
+         # Consider returning None if positive lon is definitely wrong for your use case
+
+    # --- ** NEW: Explicitly Project Input Point ** ---
+    try:
+        # Create a GeoSeries with the input point in Lat/Lon (EPSG:4326)
+        point_geom_geo = gpd.GeoSeries([Point(float(point_lon), float(point_lat))], crs="EPSG:4326")
+        # Project the point to the graph's target CRS
+        point_geom_proj = point_geom_geo.to_crs(target_crs)
+        # Extract the projected coordinates
+        projected_x = point_geom_proj.iloc[0].x
+        projected_y = point_geom_proj.iloc[0].y
+        # print(f"Debug: Projected input point to X={projected_x:.3f}, Y={projected_y:.3f}") # Optional debug
+    except Exception as e:
+        print(f"Find Nearest Node Error: Failed to project input coordinates: {e}")
+        return None
+
+    # --- Find Nearest Node using PRE-PROJECTED Coordinates ---
+    try:
+        # Now call nearest_nodes with the explicitly projected X and Y
+        nearest_node_id_result = ox.nearest_nodes(graph, X=projected_x, Y=projected_y)
+
+        # Handle potential list return
+        if isinstance(nearest_node_id_result, list):
+            if not nearest_node_id_result:
+                 print("Find Nearest Node Error: ox.nearest_nodes returned empty list.")
+                 return None
+            node_id = nearest_node_id_result[0]
+        else:
+            node_id = nearest_node_id_result
+
+        # Final sanity check
+        if node_id not in graph:
+             print(f"Find Nearest Node Error: Node ID {node_id} returned by osmnx not found in graph.")
+             return None
+
+        return int(node_id)
+
+    except Exception as e:
+        print(f"Find Nearest Node Error: An exception occurred during ox.nearest_nodes call (with projected coords): {e}")
+        return None
 
 def load_and_initialize_map(
     place_name="San Francisco, California, USA",
@@ -650,30 +724,53 @@ if __name__ == "__main__":
         else:
             print("Could not find nearest edge 2.")
 
-        # --- Test find_shortest_path ---
-        if (
-            start_node_sp is not None
-            and end_node_sp is not None
-            and start_node_sp != end_node_sp
-        ):
-            print(f"\nTesting shortest path from {start_node_sp} to {end_node_sp}...")
-            shortest_path_result = find_shortest_path(
-                test_graph, start_node_sp, end_node_sp
-            )
-            if shortest_path_result:
-                print(f"Shortest path found with {len(shortest_path_result)} nodes.")
-                # print(f"Path nodes: {shortest_path_result}") # Can be very long
+        # --- Test find_nearest_node ---
+        print("\n--- Testing find_nearest_node ---")
+        # Test points (ensure correct negative longitude)
+        test_coords = {
+            "Fire_Station_1": (37.74525, -122.40122), # The one we debugged
+            "SF Ferry Building": (37.7955, -122.3937),
+            "SF City Hall": (37.7793, -122.4194), # Corrected coords
+            "Invalid Coords (Pos Lon)": (37.7749, 122.4194), # Test invalid input
+            "Outside SF (Oakland)": (37.8044, -122.2712)
+        }
+
+        found_nodes = {}
+        for name, (lat, lon) in test_coords.items():
+             print(f"\nFinding nearest node for: {name} ({lat}, {lon})")
+             node_id = find_nearest_node(test_graph, lat, lon)
+             if node_id is not None:
+                 print(f"  -> Found Node ID: {node_id}")
+                 found_nodes[name] = node_id
+                 # Optional: Check if node exists and print coordinates
+                 # try:
+                 #    print(f"     Node Coords (proj): x={test_graph_proj.nodes[node_id]['x']:.1f}, y={test_graph_proj.nodes[node_id]['y']:.1f}")
+                 # except KeyError:
+                 #    print("     Node data not found (unexpected).")
+             else:
+                 print(f"  -> Failed to find node.")
+
+        # --- Test find_shortest_path using found nodes ---
+        start_node_key = "SF Ferry Building"
+        end_node_key = "SF City Hall"
+
+        if start_node_key in found_nodes and end_node_key in found_nodes:
+            start_node_sp = found_nodes[start_node_key]
+            end_node_sp = found_nodes[end_node_key]
+
+            if start_node_sp != end_node_sp:
+                print(f"\nTesting shortest path from '{start_node_key}' (Node {start_node_sp}) to '{end_node_key}' (Node {end_node_sp})...")
+                shortest_path_result = find_shortest_path(
+                    test_graph, start_node_sp, end_node_sp
+                )
+                if shortest_path_result:
+                    print(f"Shortest path found with {len(shortest_path_result)} nodes.")
+                else:
+                    print("No shortest path found between the selected nodes.")
             else:
-                print("No shortest path found between the selected nodes.")
-        elif start_node_sp == end_node_sp and start_node_sp is not None:
-            print(
-                f"\nStart and end nodes for shortest path are the same ({start_node_sp}). Skipping pathfinding."
-            )
+                print(f"\nStart and end nodes for shortest path test are the same ({start_node_sp}). Skipping.")
         else:
-            print(
-                "\nCould not determine valid start/end nodes from nearest edges. Skipping shortest path test."
-            )
-        # --- End Test find_shortest_path ---
+             print(f"\nCould not find valid start/end nodes ('{start_node_key}', '{end_node_key}') for shortest path test.")
 
     else:
         print("\nFailed to load map data.")
