@@ -6,6 +6,7 @@ import time
 import networkx as nx  # Import networkx for graph algorithms like BFS
 from collections import deque  # Needed for BFS queue
 from typing import Tuple, Optional, Dict, List, Any
+import math
 
 print(f"OSMnx version used in map_processing: {ox.__version__}")
 print(f"NetworkX version used in map_processing: {nx.__version__}")
@@ -111,34 +112,119 @@ def perform_bfs(graph: nx.MultiGraph, start_node: int):
     return bfs_order
 
 
+def find_shortest_path(
+    graph: nx.MultiGraph, start_node: int, end_node: int
+) -> Optional[List[int]]:
+    """
+    Finds the shortest path between two nodes using Dijkstra's algorithm,
+    considering edge distance (cost 1 per edge) and traffic level.
+
+    Args:
+        graph: The networkx graph object (projected).
+        start_node: The ID of the starting node.
+        end_node: The ID of the target node.
+
+    Returns:
+        A list of node IDs representing the shortest path from start_node to
+        end_node, including both start and end nodes.
+        Returns None if no path exists, or if start/end nodes are invalid.
+        Returns an empty list if the graph is None or empty.
+    """
+    if graph is None or graph.number_of_nodes() == 0:
+        print("Shortest Path Error: Graph is None or empty.")
+        return []  # Return empty list for empty graph
+
+    if start_node not in graph:
+        print(f"Shortest Path Error: Start node {start_node} not found in the graph.")
+        return None
+    if end_node not in graph:
+        print(f"Shortest Path Error: End node {end_node} not found in the graph.")
+        return None
+    if start_node == end_node:
+        return [start_node]  # Path from a node to itself is just the node
+
+    # --- Define the weight function ---
+    # Weight = Base Cost (1 per edge) + Traffic Level Penalty
+    def weight_func(u, v, data):
+        # data is the edge data dictionary for the edge between u and v
+        # For MultiGraphs, NetworkX handles selecting the lowest weight edge if parallel edges exist
+        base_cost = 1
+        traffic_level = data.get("traffic_level", 0)  # Default to 0 if missing
+        # Simple additive weight: Adjust multiplier if needed for different balance
+        # traffic_penalty_factor = 1.0
+        # return base_cost + (traffic_penalty_factor * traffic_level)
+        return (
+            base_cost + traffic_level
+        )  # 50/50 weighting implies equal contribution scaling
+
+    print(f"Finding shortest path from {start_node} to {end_node} using Dijkstra...")
+    try:
+        # Use Dijkstra's algorithm from networkx
+        # Pass the weight function directly
+        shortest_path_nodes = nx.dijkstra_path(
+            graph, source=start_node, target=end_node, weight=weight_func
+        )
+        print(f"Shortest path found with {len(shortest_path_nodes)} nodes.")
+        return shortest_path_nodes
+    except nx.NetworkXNoPath:
+        print(
+            f"Shortest Path Error: No path found between {start_node} and {end_node}."
+        )
+        return None  # No path exists
+    except Exception as e:
+        print(f"Shortest Path Error: An unexpected error occurred during Dijkstra: {e}")
+        return None
+
+
+# --- End Modified Function ---
+
+
 def load_and_initialize_map(
     place_name="San Francisco, California, USA",
 ) -> Tuple[
     Optional[nx.MultiGraph], Optional[gpd.GeoDataFrame], Optional[Dict[int, str]]
 ]:
     """
-    Loads the street graph, adds bearings, projects it, assigns random traffic
-    light phases, calculates initial edge states, and returns the projected graph,
-    the edges GeoDataFrame (Lat/Lon), and the initial node_phase dictionary.
+    Loads graph, adds bearings, projects, assigns phases, adds initial traffic level (0),
+    calculates initial states, returns projected graph, Lat/Lon GDF, and initial phases.
     """
     print(f"Starting map loading for '{place_name}'...")
     start_time = time.time()
-    G_proj = None  # Initialize graph object
-    gdf_edges = None  # Initialize GeoDataFrame
-    initial_node_phase = None  # Initialize node phases
+    G_proj = None
+    gdf_edges = None
+    initial_node_phase = None
 
-    # 1. Download Graph Data
-    print("Downloading graph data...")
+    # 1. Download Graph Data (Utilizing OSMnx Caching)
+    print(f"Requesting graph for '{place_name}'. Will use cache if available.")
+    print(f"OSMnx cache folder: {ox.settings.cache_folder}")
     try:
         G = ox.graph_from_place(place_name, network_type="drive")
-        print(f"Graph downloaded (CRS: {G.graph.get('crs')}).")
+        # Print the number of roads in the graph
+        # Count unique road IDs (osmid) to get the actual number of roads
+        # Some edges might belong to the same road
+        unique_road_ids = set()
+        for u, v, data in G.edges(data=True):
+            osmid = data.get("osmid")
+            if osmid:
+                # Handle both single values and lists
+                if isinstance(osmid, list):
+                    for road_id in osmid:
+                        unique_road_ids.add(road_id)
+                else:
+                    unique_road_ids.add(osmid)
+
+        print(f"Graph contains {len(unique_road_ids)} unique roads.")
+        print(
+            f"Graph retrieved (CRS: {G.graph.get('crs')}). Contains {G.number_of_edges()} raw edges."
+        )
     except Exception as e:
-        print(f"Error downloading graph: {e}")
+        print(f"Error retrieving graph (download or cache): {e}")
         return None, None, None
 
     # 2. Convert to Undirected
     print("Converting graph to undirected...")
     G_undir = ox.convert.to_undirected(G)
+    print(f"Graph type: {type(G_undir)}")
 
     # 3. Add Bearings
     print("Adding edge bearings...")
@@ -162,33 +248,32 @@ def load_and_initialize_map(
         f"Processed graph has {G_proj.number_of_nodes()} nodes and {G_proj.number_of_edges()} edges."
     )
 
-    # 5. Assign Initial Traffic Light Phases and Calculate Edge States
+    G_proj = ox.convert.to_undirected(G_proj)
+    print(f"Graph type: {type(G_proj)}")
+    # 5. Assign Initial Traffic Light Phases and Calculate Edge States (using G_proj)
     print("Assigning initial random traffic light phases...")
-    nodes_to_use = list(G_proj.nodes())  # Get list of nodes
+    nodes_to_use = list(G_proj.nodes())
     initial_node_phase = {node: random.choice(["NS", "EW"]) for node in nodes_to_use}
     print(f"Assigned initial NS/EW phases to {len(initial_node_phase)} nodes.")
 
-    print("Calculating initial edge signal groups and states...")
+    print(
+        "Calculating initial edge signal groups, light/color states, and traffic levels..."
+    )
     default_signal_group = "NS"
     edges_processed = 0
     for u, v, data in G_proj.edges(data=True):
         edges_processed += 1
-        # Bearing should exist now
+        # --- Calculate signal group based on bearing ---
         if "bearing" not in data or data["bearing"] is None:
-            print(
-                f"Warning: Bearing missing for edge ({u}, {v}) in projected graph. Assigning default signal group."
-            )
             data["signal_group"] = default_signal_group
         else:
             b = data["bearing"]
             is_ew_bearing = (45 <= b < 135) or (225 <= b < 315)
             data["signal_group"] = "EW" if is_ew_bearing else "NS"
 
-        # Determine initial green status at each end
+        # --- Set initial light/color state ---
         data["is_green_u"] = data["signal_group"] == initial_node_phase.get(u)
         data["is_green_v"] = data["signal_group"] == initial_node_phase.get(v)
-
-        # Determine initial visualization color
         green_u = data.get("is_green_u", False)
         green_v = data.get("is_green_v", False)
         if green_u and green_v:
@@ -200,11 +285,16 @@ def load_and_initialize_map(
         else:
             data["viz_color"] = "gray"
 
+        # --- Initialize traffic level ---
+        data["traffic_level"] = 0  # Default to no traffic initially
+        # --------------------------------
+
     print(f"Finished calculating initial states for {edges_processed} edges.")
 
     # 6. Convert to GeoDataFrame (from projected graph)
     print("Converting edge data to GeoDataFrame...")
     try:
+        # Include traffic_level column in the GDF
         gdf_edges_proj = ox.graph_to_gdfs(G_proj, nodes=False, edges=True)
         print(
             f"Converting GeoDataFrame CRS from {gdf_edges_proj.crs} back to EPSG:4326..."
@@ -213,13 +303,10 @@ def load_and_initialize_map(
         print(f"GeoDataFrame CRS is now: {gdf_edges.crs}")
         gdf_edges = gdf_edges.reset_index()
         print("GeoDataFrame created.")
+        # print(f"GDF columns: {gdf_edges.columns.tolist()}") # Debugging columns
     except Exception as e:
         print(f"Error converting graph edges to GeoDataFrame or reprojecting: {e}")
-        return (
-            G_proj,
-            None,
-            initial_node_phase,
-        )  # Return graph and phases even if GDF fails
+        return G_proj, None, initial_node_phase
 
     end_time = time.time()
     print(
@@ -228,6 +315,131 @@ def load_and_initialize_map(
 
     # --- Return projected graph, Lat/Lon GDF, and initial phases ---
     return G_proj, gdf_edges, initial_node_phase
+
+
+def simulate_traffic_flow(
+    graph: nx.MultiGraph,
+    num_paths: int = 50,
+    max_peak_level: int = 3,
+    path_weight: Optional[
+        str
+    ] = "length",  # Use 'length' for pathfinding independent of current traffic
+) -> List[Dict[str, Any]]:
+    # ... (initial checks: graph None, max_peak_level) ...
+    if graph is None or graph.number_of_edges() == 0:
+        print("Simulate Traffic Flow Error: Graph is None or empty.")
+        return []
+    if max_peak_level not in [1, 2, 3]:
+        print(
+            "Simulate Traffic Flow Warning: max_peak_level should be 1, 2, or 3. Setting to 3."
+        )
+        max_peak_level = 3
+
+    print(f"Simulating traffic flow on {num_paths} random paths...")  # Original print
+    start_time = time.time()  # Original timing start
+
+    # Store the maximum level assigned to each edge {(u, v, key): level}
+    edge_max_levels: Dict[Tuple[int, int, int], int] = {
+        (u, v, k): 0 for u, v, k in graph.edges(keys=True)
+    }
+    nodes = list(graph.nodes())
+    if len(nodes) < 2:
+        print("Simulate Traffic Flow Error: Not enough nodes in graph for paths.")
+        return []
+
+    # --- DEBUG COUNTERS ---
+    paths_generated = 0
+    paths_attempted = 0
+    paths_failed_no_path = 0
+    paths_failed_too_short = 0
+    other_errors = 0
+    # --- END DEBUG COUNTERS ---
+
+    print(
+        f"\nDEBUG: Starting simulation loop for {num_paths} paths..."
+    )  # !! ADDED DEBUG PRINT !!
+
+    for i in range(num_paths):
+        paths_attempted += 1
+        start_node, end_node = random.sample(nodes, 2)
+        # Uncomment below for extreme detail:
+        # print(f"\nDEBUG Attempt {i+1}: Path from {start_node} to {end_node} using weight='{path_weight}'")
+
+        try:
+            path_nodes = nx.shortest_path(
+                graph, source=start_node, target=end_node, weight=path_weight
+            )
+            # Uncomment below for extreme detail:
+            # print(f"  DEBUG: Found path with {len(path_nodes)} nodes.")
+
+            if len(path_nodes) < 2:
+                # print("  DEBUG: Path too short (less than 2 nodes). Skipping.")
+                paths_failed_too_short += 1
+                continue
+
+            # Path is valid and long enough
+            paths_generated += 1  # Increment counter
+
+            # --- Generate the traffic pattern along the path ---
+            path_edges = list(zip(path_nodes[:-1], path_nodes[1:]))
+            path_edge_count = len(path_edges)
+            current_path_peak_level = random.randint(1, max_peak_level)
+            peak_index = path_edge_count // 2
+
+            for idx, (u, v) in enumerate(path_edges):
+                dist_from_peak = abs(idx - peak_index)
+                norm_dist = dist_from_peak / (peak_index + 1e-6)
+                level = current_path_peak_level * (1 - norm_dist)
+                level = max(0, min(current_path_peak_level, int(round(level))))
+
+                edge_data_dict = graph.get_edge_data(u, v)
+                if edge_data_dict:
+                    for key in edge_data_dict.keys():
+                        edge_tuple = (u, v, key)
+                        edge_max_levels[edge_tuple] = max(
+                            edge_max_levels.get(edge_tuple, 0), level
+                        )
+
+        except nx.NetworkXNoPath:
+            # print(f"  DEBUG: No path found between {start_node} and {end_node}.")
+            paths_failed_no_path += 1
+            continue
+        except Exception as e:
+            print(
+                f"  DEBUG: Error processing path {i+1} ({start_node} -> {end_node}): {e}"
+            )  # !! ADDED DEBUG PRINT !!
+            other_errors += 1
+            continue
+
+    # --- After the loop ---
+    # !! ADDED DEBUG PRINTS !!
+    print(f"\nDEBUG: Loop finished. Stats:")
+    print(f"  Paths Attempted: {paths_attempted}")
+    print(f"  Paths Generated (valid length): {paths_generated}")
+    print(f"  Paths Failed (No Path Exception): {paths_failed_no_path}")
+    print(f"  Paths Failed (Too Short): {paths_failed_too_short}")
+    print(f"  Paths Failed (Other Errors): {other_errors}")
+    # !! END ADDED DEBUG PRINTS !!
+
+    # --- Apply the calculated maximum levels back to the graph ---
+    updated_edges_for_db = []
+    edges_updated_count = 0
+    for (u, v, k), max_level in edge_max_levels.items():
+        if graph.has_edge(u, v, k):
+            current_level = graph.edges[u, v, k].get("traffic_level", 0)
+            if current_level != max_level:
+                graph.edges[u, v, k]["traffic_level"] = max_level
+                edges_updated_count += 1
+                updated_edges_for_db.append(
+                    {"u_node": u, "v_node": v, "traffic_level": max_level}
+                )
+
+    end_time = time.time()  # Original timing end
+    # Original final prints:
+    print(f"Traffic flow simulation finished in {end_time - start_time:.2f} seconds.")
+    print(f"{edges_updated_count} edge instances had their traffic level changed.")
+
+    return updated_edges_for_db
 
 
 def update_traffic_lights(
@@ -345,104 +557,123 @@ def update_traffic_lights(
 # Example of direct execution (for testing this file)
 if __name__ == "__main__":
     print("Testing map_processing module...")
-    # Note: test_graph will be projected, test_gdf will be in Lat/Lon (EPSG:4326)
     test_graph, test_gdf, test_node_phases = load_and_initialize_map()
 
-    if test_graph is not None:
+    if test_graph is not None and test_node_phases is not None:
         print(
             f"\nSuccessfully loaded graph (Projected CRS: {test_graph.graph['crs']}). Nodes: {test_graph.number_of_nodes()}, Edges: {test_graph.number_of_edges()}"
         )
-        # Check if bearings exist in the graph data
-        has_bearing = False
+        print(f"Initial node phases generated for {len(test_node_phases)} nodes.")
+
+        # Check if traffic level attribute exists
+        has_traffic_level = False
         if test_graph.number_of_edges() > 0:
-            first_edge_data = next(iter(test_graph.edges(data=True)))
-            if "bearing" in first_edge_data[2]:
-                has_bearing = True
-        print(f"Bearings present in graph edge data: {has_bearing}")
+            first_edge_data = next(iter(test_graph.edges(data=True)))[
+                2
+            ]  # Get data dict
+            if "traffic_level" in first_edge_data:
+                has_traffic_level = True
+        print(f"Traffic level present in graph edge data: {has_traffic_level}")
 
         if test_gdf is not None:
             print(
                 f"Successfully created GeoDataFrame (CRS: {test_gdf.crs}). Number of edges: {len(test_gdf)}"
             )
-            # print("Sample GDF data (first 5 rows):") # Less verbose
-            # print(test_gdf[['u', 'v', 'osmid', 'signal_group', 'is_green_u', 'is_green_v', 'viz_color']].head())
+            if "traffic_level" in test_gdf.columns:
+                print("Traffic level column present in GeoDataFrame.")
+                # print("Sample traffic level data:") # Less verbose
+                # print(test_gdf[['osmid', 'traffic_level']].head())
+            else:
+                print("Warning: Traffic level column missing from GeoDataFrame.")
         else:
             print("Failed to create GeoDataFrame.")
 
-        # --- Test Find Nearest Edge ---
-        test_lat, test_lon = (
-            37.7955,
-            -122.3937,
-        )  # Example coordinates (e.g., near SF Ferry Building)
-        print(f"\nTesting find_nearest_edge for point ({test_lat}, {test_lon})...")
-        nearest_edge_result = find_nearest_edge(test_graph, test_lat, test_lon)
-        if nearest_edge_result:
-            u, v, key = nearest_edge_result
-            print(f"Found nearest edge: u={u}, v={v}, key={key}")
-        else:
-            print("Could not find nearest edge.")
-        # --- End Test Find Nearest Edge ---
-
-        # --- Test BFS ---
-        if test_graph.number_of_nodes() > 0:
-            # Use a node from the nearest edge result if available, otherwise default
-            start_node_id = (
-                nearest_edge_result[0]
-                if nearest_edge_result
-                else list(test_graph.nodes())[0]
+        print("\nTesting NEW traffic flow simulation...")
+        # Ensure 'length' attribute exists, otherwise pathfinding might fail or use hop count
+        if not nx.get_edge_attributes(test_graph, "length"):
+            print(
+                "Warning: 'length' attribute missing from edges. Pathfinding might use hop count."
             )
-            print(f"\nTesting BFS starting from node: {start_node_id}")
-            bfs_result = perform_bfs(test_graph, start_node_id)
-            if bfs_result is not None:
-                print(f"BFS visited {len(bfs_result)} nodes.")
-                # print(f"First 10 nodes in BFS order: {bfs_result[:10]}") # Less verbose
-            else:
-                print("BFS failed (start node likely invalid).")
+            # Optionally add length if missing:
+            # for u, v, k, data in test_graph.edges(keys=True, data=True):
+            #     if 'length' not in data: data['length'] = 1 # Example: Assign default length 1
+        traffic_updates_flow = simulate_traffic_flow(
+            test_graph, num_paths=100, max_peak_level=3, path_weight="length"
+        )
+        print(
+            f"{len(traffic_updates_flow)} edges marked for DB traffic level update (Flow Method)."
+        )
 
-            # Test BFS with an invalid node
-            invalid_node_id = -999999999  # Make it more distinct
-            print(f"\nTesting BFS starting from invalid node: {invalid_node_id}")
-            bfs_invalid_result = perform_bfs(test_graph, invalid_node_id)
-            if bfs_invalid_result is None:
-                print("BFS correctly returned None for invalid start node.")
-            else:
-                print(f"BFS unexpectedly returned: {bfs_invalid_result}")
-        else:
-            print("\nGraph has no nodes, skipping BFS test.")
-        # --- End Test BFS ---
-
-        # --- Test Update Traffic Lights ---
+        # --- Test update_traffic_lights ---
         print("\nTesting traffic light update...")
         all_nodes = list(test_graph.nodes())
-        if len(all_nodes) > 10:  # Ensure enough nodes to sample
-            nodes_to_flip_test = random.sample(
-                all_nodes, k=min(len(all_nodes), 5)
-            )  # Flip up to 5 nodes
-            print(f"Nodes selected to flip: {nodes_to_flip_test}")
-
-            # Make a copy of phases to pass to the function
+        if len(all_nodes) > 10:
+            nodes_to_flip_test = random.sample(all_nodes, k=min(len(all_nodes), 5))
+            # print(f"Nodes selected to flip: {nodes_to_flip_test}") # Less verbose
             current_phases = test_node_phases.copy()
-            updated_phases, db_updates = update_traffic_lights(
+            updated_phases, db_light_updates = update_traffic_lights(
                 test_graph, current_phases, nodes_to_flip_test
             )
-
-            print(f"Phases updated. {len(db_updates)} edges marked for DB update.")
-            if db_updates:
-                print("Sample edge data for DB update:")
-                print(db_updates[: min(len(db_updates), 3)])  # Print first 3 updates
-
-            # Verify a phase actually flipped (optional check)
-            if nodes_to_flip_test:
-                test_node = nodes_to_flip_test[0]
-                if test_node_phases[test_node] != updated_phases[test_node]:
-                    print(
-                        f"Verified phase flipped for node {test_node}: {test_node_phases[test_node]} -> {updated_phases[test_node]}"
-                    )
-                else:
-                    print(f"Warning: Phase did not flip for test node {test_node}")
+            print(
+                f"Phases updated. {len(db_light_updates)} edges marked for DB light update."
+            )
+            # if db_light_updates: print(db_light_updates[:min(len(db_light_updates), 3)]) # Less verbose
         else:
-            print("Not enough nodes in graph to test flipping.")
-        # --- End Test Update Traffic Lights ---
+            print("Not enough nodes to test light flipping.")
+
+        # --- Test Find Nearest Edge ---
+        test_lat1, test_lon1 = 37.7955, -122.3937  # SF Ferry Building
+        test_lat2, test_lon2 = 37.7749, -122.4194  # SF City Hall
+        print(f"\nTesting find_nearest_edge for point 1 ({test_lat1}, {test_lon1})...")
+        nearest1 = find_nearest_edge(test_graph, test_lat1, test_lon1)
+        print(f"\nTesting find_nearest_edge for point 2 ({test_lat2}, {test_lon2})...")
+        nearest2 = find_nearest_edge(test_graph, test_lat2, test_lon2)
+
+        start_node_sp = None
+        end_node_sp = None
+
+        if nearest1:
+            u1, v1, k1 = nearest1
+            start_node_sp = u1  # Use one of the nodes from the nearest edge
+            print(
+                f"Found nearest edge 1: u={u1}, v={v1}, key={k1}. Using node {start_node_sp} as start."
+            )
+        else:
+            print("Could not find nearest edge 1.")
+
+        if nearest2:
+            u2, v2, k2 = nearest2
+            end_node_sp = u2  # Use one of the nodes from the nearest edge
+            print(
+                f"Found nearest edge 2: u={u2}, v={v2}, key={k2}. Using node {end_node_sp} as end."
+            )
+        else:
+            print("Could not find nearest edge 2.")
+
+        # --- Test find_shortest_path ---
+        if (
+            start_node_sp is not None
+            and end_node_sp is not None
+            and start_node_sp != end_node_sp
+        ):
+            print(f"\nTesting shortest path from {start_node_sp} to {end_node_sp}...")
+            shortest_path_result = find_shortest_path(
+                test_graph, start_node_sp, end_node_sp
+            )
+            if shortest_path_result:
+                print(f"Shortest path found with {len(shortest_path_result)} nodes.")
+                # print(f"Path nodes: {shortest_path_result}") # Can be very long
+            else:
+                print("No shortest path found between the selected nodes.")
+        elif start_node_sp == end_node_sp and start_node_sp is not None:
+            print(
+                f"\nStart and end nodes for shortest path are the same ({start_node_sp}). Skipping pathfinding."
+            )
+        else:
+            print(
+                "\nCould not determine valid start/end nodes from nearest edges. Skipping shortest path test."
+            )
+        # --- End Test find_shortest_path ---
 
     else:
         print("\nFailed to load map data.")

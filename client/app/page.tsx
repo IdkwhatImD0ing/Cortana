@@ -406,7 +406,6 @@ export default function Dashboard() {
                     <Progress
                       value={68}
                       className="h-1 bg-gray-700"
-                      // indicatorClassName="bg-cyan-500"
                     />
                   </div>
                 </div>

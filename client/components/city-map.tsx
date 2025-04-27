@@ -22,6 +22,7 @@ if (!mapboxgl.accessToken) {
     throw new Error("Missing NEXT_PUBLIC_MAPBOX_TOKEN");
 }
 
+
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
