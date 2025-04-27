@@ -1,0 +1,6 @@
+names:
+- car
+nc: 1
+path: /home/user/Cortana/machine-learning/car_dataset
+train: images/train
+val: images/val
