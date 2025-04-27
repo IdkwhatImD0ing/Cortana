@@ -1,33 +1,221 @@
-'use client';
+"use client"
 
-import dynamic from 'next/dynamic';
-import AutoSizer from 'react-virtualized/dist/commonjs/AutoSizer';
+import React, { useEffect, useState } from "react"; // Import useEffect and useState
+import dynamic from "next/dynamic";
+import { useDispatch } from "react-redux"; // Import useDispatch
+import { addDataToMap } from "@kepler.gl/actions"; // Import the action
 
+// Import your GeoJSON data
+import mapData from "./edges_with_traffic_states_v2.json";
+
+// Dynamically import KeplerGl component
+// Added a simple loading indicator
 const KeplerGl = dynamic(
-    () => import('@kepler.gl/components').then((m) => m.default),
-    { ssr: false }
+    () => import('@kepler.gl/components').then((m) => m.KeplerGl),
+    { ssr: false, loading: () => <p>Loading Map...</p> }
 );
 
-export default function MapViewer() {
-    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+// --- Helper function to process GeoJSON into Kepler.gl format ---
+function processGeojsonForKepler(geojson: { features?: any; }) {
+    if (!geojson || !geojson.features || geojson.features.length === 0) {
+        console.warn("GeoJSON is empty or invalid.");
+        return null;
+    }
 
-    return (
-        <div style={{ position: 'absolute', inset: 0 }}>
-        <AutoSizer>
-            {({ width, height }) => (
-            <KeplerGl
-                id="map"                       // ← must match admin’s id
-                width={width}
-                height={height}
-                mapboxApiAccessToken={token}
-                initialUiState={{             // hide all side panels & modals
-                readOnly:        true,
-                activeSidePanel: null,
-                currentModal:    null
-                }}
-            />
-            )}
-        </AutoSizer>
-        </div>
-    );
+    const colorMap: Record<string, string> = {
+        'lime': '#00FF00',
+        'orange': '#FFA500',
+        'red': '#FF0000'
+        // Add other mappings if needed, and maybe a default
+        // 'default': '#808080' // Grey for unknown values
+    };
+
+    try {
+        // Use the first feature's properties to define fields automatically
+        const firstFeatureProps = geojson.features[0].properties || {};
+        const propKeys = Object.keys(firstFeatureProps);
+        const colorPropIndex = propKeys.indexOf('viz_color');
+
+        const fields = propKeys.map(key => {
+            const value = firstFeatureProps[key];
+            let type = 'string'; // Default type
+            if (typeof value === 'number') {
+                type = Number.isInteger(value) ? 'integer' : 'real';
+            } else if (typeof value === 'boolean') {
+                type = 'boolean';
+            }
+            // more specific type checks if needed (e.g., timestamp)
+            return { name: key, type: (key === 'viz_color' ? 'string' : type) };
+        });
+
+        // Crucially, add the geometry field
+        fields.push({ name: 'geometry', type: 'geojson' });
+
+        // Map features to rows
+        const rows = geojson.features.map((feature: { properties: { [x: string]: any; }; geometry: any; }) => {
+            const row = [];
+            for (let i = 0; i < propKeys.length; i++) {
+                const key = propKeys[i];
+                let value = feature.properties ? feature.properties[key] : null;
+
+                // --- Apply Color Mapping ---
+                // Check if this is the color property column
+                if (i === colorPropIndex && typeof value === 'string') {
+                    // Map the color name to hex, provide default if not found
+                     value = colorMap[value?.toLowerCase()] || '#808080'; // Use grey as default
+                }
+                // --- End Color Mapping ---
+                row.push(value);
+            }
+            row.push(feature.geometry);
+            return row;
+        });
+
+        return { fields, rows };
+    } catch (error) {
+        console.error("Error processing GeoJSON for Kepler.gl:", error);
+        return null;
+    }
 }
+// --- End Helper Function ---
+
+
+const Map = () => {
+  const dispatch = useDispatch(); // Get the dispatch function from Redux
+
+  // State to hold window dimensions safely for client-side rendering
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+
+  // Effect to set initial dimensions after component mounts on the client
+  useEffect(() => {
+      setDimensions({
+          width: window.innerWidth,
+          height: window.innerHeight
+      });
+
+      // Optional: Add resize listener to update dimensions
+      const handleResize = () => {
+          setDimensions({
+              width: window.innerWidth,
+              height: window.innerHeight
+          });
+      }
+      window.addEventListener('resize', handleResize);
+      // Cleanup listener on component unmount
+      return () => window.removeEventListener('resize', handleResize);
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  
+  // Effect to load data into Kepler.gl once the component mounts
+  useEffect(() => {
+    if (mapData) {
+      console.log("Processing GeoJSON data...");
+      const processedData = processGeojsonForKepler(mapData); // Process the imported GeoJSON
+
+      // --- Define the initial visualization configuration ---
+      const keplerConfig = {
+        visState: {
+          // Layer configuration tells Kepler HOW to draw the data
+          layers: [
+            {
+              id: 'traffic_lines',    // Unique ID for this layer
+              type: 'line',           // We want to draw lines
+              config: {
+                dataId: 'traffic_edges_v2', // *** MUST MATCH the dataset ID below ***
+                label: 'Traffic Edges',
+                isVisible: true,
+
+                // --- Color Configuration ---
+                // Use the 'viz_color' field generated by processGeojsonForKepler
+                // This field should now contain hex color strings (e.g., '#FF0000')
+                colorField: {
+                  name: 'viz_color',
+                  type: 'string' // It's a string containing a color value
+                },
+                // Specify how to use the color field. 'identity' scale often works
+                // well if the field directly contains CSS color strings.
+                // Kepler often infers this, but being explicit can help.
+                 colorScale: 'identity', // Use the value directly as the color
+
+                // --- Other Visual Settings ---
+                columns: {
+                  // Explicitly name the geometry column (best practice)
+                  geojson: 'geometry'
+                },
+                visConfig: {
+                  opacity: 0.8,
+                  thickness: 2,
+                  // sizeField: null, // Ensure thickness isn't tied to another field unless intended
+                  // sizeScale: 'linear'
+                }
+              }
+            }
+          ],
+          // You can set the initial map viewport here if needed,
+          // though centerMap: true in options often suffices.
+          // mapState: {
+          //   latitude: YOUR_INITIAL_LATITUDE,
+          //   longitude: YOUR_INITIAL_LONGITUDE,
+          //   zoom: YOUR_INITIAL_ZOOM
+          // }
+        }
+        // mapStyle: { styleType: 'dark' } // Optional: set base map style
+      };
+      // --- End configuration definition ---
+
+
+      if (processedData) {
+          console.log("Dispatching addDataToMap action with data and config...");
+          dispatch(
+            addDataToMap({
+              // --- Dataset Definition ---
+              datasets: {
+                info: {
+                  label: 'Traffic Edges Data', // Label for the dataset in UI
+                  id: 'traffic_edges_v2'       // Unique ID for this dataset
+                },
+                data: processedData // The { fields, rows } object
+              },
+              // --- Options for Loading ---
+              options: {
+                centerMap: true,      // Auto-center map on the data
+                readOnly: false
+              },
+              // --- Initial Configuration ---
+              // Pass the config here to style the layer immediately upon load
+              config: keplerConfig  // <---- **** THIS IS THE KEY CHANGE ****
+            })
+          );
+          console.log("Data and config dispatched to Kepler.gl");
+          console.log("Processed data structure:", processedData); // Good for debugging
+      } else {
+          console.error("Failed to process GeoJSON data.");
+      }
+    }
+  }, [dispatch]); // Dependency array ensures this runs once on mount
+  
+  // --- IMPORTANT: Replace with your actual Mapbox token ---
+  const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN; // <---- PUT YOUR TOKEN HERE
+
+  if (!MAPBOX_TOKEN || MAPBOX_TOKEN === "YOUR_MAPBOX_ACCESS_TOKEN") {
+      console.warn("Mapbox token is missing or using the placeholder value.");
+      // Optionally render a message asking the user to set the token
+      return <p>Please add your Mapbox Access Token in the Map component.</p>;
+  }
+
+
+  return (
+    // Using a div wrapper can help with positioning and styling
+    <div style={{ position: 'absolute', width: '100%', height: '100%', top: 0, left: 0 }}>
+      <KeplerGl
+        id="map" // Keep a consistent ID for the Kepler instance
+        mapboxApiAccessToken={MAPBOX_TOKEN}
+        width={dimensions.width}
+        height={dimensions.height}
+        // No need for store={store} - KeplerGl connects via Redux Provider
+      />
+    </div>
+  );
+};
+
+export default Map;
