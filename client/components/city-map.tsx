@@ -298,9 +298,9 @@ export default function TrafficMap() {
             if (status === "SUBSCRIBED") {
             console.log("[Effect 1] Supabase realtime channel subscribed.");
             }
-            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            console.error(`[Effect 1] Supabase channel error: ${status}`, err);
-            }
+            // if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            // console.error(`[Effect 1] Supabase channel error: ${status}`, err);
+            // }
         });
 
         // Cleanup function: Remove map and unsubscribe from channel
